@@ -1,0 +1,195 @@
+---
+title: "MeD-P"
+output: html_notebook
+---
+# This is an example code for MeD-P
+## Load packages
+```{r}
+# set working directory
+setwd('~/Downloads/MeD-P/example')
+
+# 首先请先安装所需要的软件包
+suppressMessages({
+  library(tidyverse)
+  library(edgeR)
+  library(SummarizedExperiment)
+  library(DESeq2)
+  library(reshape2)
+  library(sva)
+  library(RColorBrewer)
+  library(ggplot2)
+})
+source('code/ComBat_seq.R')
+source('code/helper_seq.R')
+source('code/helper.R')
+source('code/Normalization_TestSet.R')
+```
+
+## test data preprocessing
+```{r}
+# load training data
+train_data <- read.csv('data/Trainraw.csv') %>% column_to_rownames('genename')
+train_meta <- read.csv('data/Trainmeta.csv')
+train_adj <- readRDS('data/Trainadj.rds')
+# load 343 genes
+genes <- read.csv('data/genes.csv')
+genes <- genes$genename
+# load test data
+test_data <- read.csv('data/Testraw.csv') %>% arrange(match(genename,rownames(train_data))) %>% column_to_rownames('genename')
+test_meta <- read.csv('data/Testmeta.csv')
+# combine training and test data
+coldata <- rbind(train_meta,test_meta) %>% column_to_rownames('sampleID') %>% mutate_all(as_factor)
+data <- cbind(train_data,test_data)
+# batch correction
+data <- ComBat_seq(counts = data,batch = coldata$batch,group = NULL,full_mod = FALSE) # ComBat-seq doesn't support 1 sample per batch yet, so we should make sure at least 2 samples each batch.
+SE <- DaMiR.makeSE(data,coldata)
+idx_train <- 1:132
+Learning_set <- SE[, idx_train, drop=FALSE]
+Ind_Test_set <- SE[, -idx_train, drop=FALSE]
+expr_LearningSet <- Learning_set[rownames(train_adj)]
+expr_Ind_Test_set <- Ind_Test_set[rownames(train_adj)]
+norm_ind_ts <- DaMiR.iTSnorm(expr_LearningSet,
+                             expr_Ind_Test_set,
+                             normtype = "vst",
+                             method = "precise")
+test_adj <- DaMiR.iTSadjust(train_adj, norm_ind_ts)
+# test data as model input
+test_input <- test_adj %>% as.data.frame() %>% rownames_to_column('genename') %>% filter(genename %in% genes) %>% arrange(match(genename,genes)) %>% column_to_rownames('genename') %>% t()
+# create output file path, and save the test data if you need
+work_dir = getwd()
+output_dir <- file.path(work_dir, "output")
+dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+write.csv(test_input,file.path(output_dir, "Testdata.csv"),row.names = T)
+```
+
+## generate predictive report
+```{r}
+# 加载模型
+model <- readRDS("model/model.rds")
+
+# 提取训练数据和参数
+X_train <- as.matrix(model$X_train)
+y_train <- as.factor(model$y_train)
+n_neighbors <- model$n_neighbors
+# 获取测试数据样本名称
+test_id <- rownames(test_input)
+
+# 获取预测类别和各类概率
+results <- list()
+for (i in seq_along(test_id)) {
+  sample_data <- test_input[i, , drop = FALSE]
+  # 预测类别
+  predicted_class <- model$predict(sample_data)
+  # 预测概率
+  prob <- model$predict_prob(sample_data)
+  # 构造一行数据
+  row <- c(test_id[i], as.character(predicted_class), as.numeric(prob) * 100)
+  results[[i]] <- row
+}
+
+# 构建输出 DataFrame
+labels <- levels(model$predict(test_input))
+columns <- c("sampleID", "predicted_class", paste0(labels, "_prob"))
+output <- as.data.frame(do.call(rbind, results))
+colnames(output) <- columns
+
+# 查看预测结果
+print(output)
+
+# 保存预测结果
+write.csv(output, file.path(output_dir, "prediction_results.csv"), row.names = FALSE, quote = FALSE)
+```
+## predictive report visualization using radar plots
+```{r}
+# 提取标签
+labels <- gsub("_prob", "", names(output)[grepl("_prob", names(output))])
+num_vars <- length(labels)
+angles <- seq(0, 2 * pi, length.out = num_vars + 1)[-length(num_vars + 1)]
+
+# 定义雷达图绘制函数
+plot_radar_with_axes <- function(row, labels, angles, output_dir) {
+  sampleID <- row[["sampleID"]]
+  predicted_class <- row[["predicted_class"]]
+  stats <- as.numeric(row[names(row) %in% paste0(labels, "_prob")])
+  stats <- c(stats, stats[1])  # 闭合
+  max_val <- 100  # 假设概率最大为100
+  
+  # 计算 x, y 坐标（归一化到 0~1 范围，便于控制绘图范围）
+  x <- stats * cos(angles) / max_val
+  y <- stats * sin(angles) / max_val
+  
+  # 构建主数据
+  df <- data.frame(x = x, y = y, label = c(labels, labels[1]))
+  
+  # 创建网格线数据
+  # 1. 同心圆（环形网格线）
+  circles <- data.frame()
+  for (r in seq(0.2, 1, by = 0.2)) {
+    angle_seq <- seq(0, 2*pi, length.out = 100)
+    circle_df <- data.frame(
+      x = r * cos(angle_seq),
+      y = r * sin(angle_seq),
+      radius = r
+    )
+    circles <- rbind(circles, circle_df)
+  }
+  
+  # 2. 径向线（从中心到各轴方向）
+  radial_lines <- data.frame()
+  for (i in 1:num_vars) {
+    rad_df <- data.frame(
+      x = c(0, cos(angles[i])),
+      y = c(0, sin(angles[i])),
+      direction = labels[i]
+    )
+    radial_lines <- rbind(radial_lines, rad_df)
+  }
+  
+  # 绘图
+  p <- ggplot() +
+    # 背景网格：同心圆
+    geom_path(data = circles, aes(x = x, y = y, group = radius), 
+              color = "lightgray", size = 0.5, linetype = "dashed") +
+    # 径向线
+    geom_path(data = radial_lines, aes(x = x, y = y, group = direction), 
+              color = "lightgray", size = 0.5) +
+    # 雷达图主体
+    geom_polygon(data = df, aes(x = x, y = y), 
+                 fill = "steelblue", alpha = 0.4, color = "black", size = 1) +
+    geom_path(data = df, aes(x = x, y = y), color = "black", size = 1) +
+    geom_point(data = df, aes(x = x, y = y), color = "red", size = 2) +
+    # 轴标签
+    geom_text(data = df[1:num_vars, ], 
+              aes(x = x * 1.15, y = y * 1.15, label = label), 
+              size = 4, color = "black") +
+    # 数值刻度标签（在同心圆上）
+    geom_text(aes(x = 0, y = 1.05, label = "100"), size = 3, color = "gray40") +
+    geom_text(aes(x = 0, y = 0.85, label = "80"), size = 3, color = "gray40") +
+    geom_text(aes(x = 0, y = 0.65, label = "60"), size = 3, color = "gray40") +
+    geom_text(aes(x = 0, y = 0.45, label = "40"), size = 3, color = "gray40") +
+    geom_text(aes(x = 0, y = 0.25, label = "20"), size = 3, color = "gray40") +
+    # 坐标轴设置
+    xlim(-1.2, 1.2) + ylim(-1.2, 1.2) +
+    coord_fixed() +  # 关键：固定纵横比，保持圆形
+    labs(title = paste0("Sample ", sampleID, " - Predicted: ", predicted_class),
+         x = NULL, y = NULL) +
+    theme(
+      panel.background = element_rect(fill = "white"),
+      panel.grid = element_blank(),  # 我们自己画网格
+      axis.line = element_line(color = "black", size = 0.5),
+      axis.ticks = element_line(color = "black", size = 0.5),
+      axis.text = element_text(color = "black", size = 10),
+      plot.title = element_text(hjust = 0.5, size = 14)
+    )
+  
+  # 保存
+  ggsave(file.path(output_dir, paste0("sample_", sampleID, ".png")), 
+         plot = p, width = 8, height = 8, dpi = 300)
+}
+
+# 批量绘图
+for (i in 1:nrow(output)) {
+  plot_radar_with_axes(output[i, ], labels, angles, output_dir)
+}
+```
+

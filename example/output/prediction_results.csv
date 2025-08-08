@@ -1,0 +1,13 @@
+sampleID,predicted_class,Ad_prob,Ch_prob,MSC_prob,Os_prob
+Test_Os1,Os,0,0,12.5,87.5
+Test_Os2,Os,0,0,37.5,62.5
+Test_Os3,Os,0,0,0,100
+Test_Ch1,Ch,0,75,0,25
+Test_Ch2,Ch,0,62.5,0,37.5
+Test_Ch3,Os,0,0,0,100
+Test_Ad1,Ad,62.5,0,12.5,25
+Test_Ad2,Ad,75,0,0,25
+Test_Ad3,Ad,50,0,0,50
+Test_MSC1,MSC,0,0,100,0
+Test_MSC2,MSC,0,0,87.5,12.5
+Test_MSC3,MSC,0,0,62.5,37.5
