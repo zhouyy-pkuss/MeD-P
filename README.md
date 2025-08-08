@@ -54,14 +54,16 @@ if you failed to install "ComBat-seq" and "DaMiRseq", you can load the files in 
 
 After downloading MeD-P to your Downloads folder, the directory structure should look like this:
 
+<pre>
 ~/Downloads/MeD-P/
-├── MeD-P.Rmd                 # Main script containing the full prediction pipeline
+├── MeD-P.Rmd               # Main script containing the full prediction pipeline
 ├── example/                # Folder with example data
-│   ├── data   # Example gene expression profile and metadata file
-│   └── model  # Prediction model
-│   └── output # Example output predictions
-│   └── code   # "ComBat-seq" and "DaMiRseq" functions
+│   ├── data/               # Example gene expression profile and metadata file
+│   ├── model/              # Prediction model
+│   ├── output/             # Example output predictions
+│   └── code/               # Files including "ComBat-seq" and "DaMiRseq" functions
 └── README.md               # This file
+</pre>
 
 
 🚀 How to Use MeD-P
